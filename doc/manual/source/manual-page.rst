@@ -580,7 +580,15 @@ These can be requested by providing different commands on the command line.
            slurm
                   The list is formatted as locally added assertions of a
                   local exceptions file defined by RFC 8416 (also known as
-                  SLURM). The produced file will have empty validation
+                  SLURM version 1). The produced file will have empty 
+                  validation output filters. This version does not support 
+                  ASPA.
+
+           slurm2
+                  The list is formatted as locally added assertions of a
+                  local exceptions file defined by 
+                  draft-ietf-sidrops-aspa-slurm-02 (also known as SLURM 
+                  version 2). The produced file will have empty validation 
                   output filters.
 
            openbgpd
@@ -850,6 +858,21 @@ These can be requested by providing different commands on the command line.
               Specifies the path to a file containing the server certificates
               to be used for HTTP-over-TLS connections. The file has to
               contain one or more certificates encoded in PEM format.
+
+       .. option:: --refresh=seconds
+
+              The amount of seconds the server should wait after having
+              finished updating and validating the local repository before
+              starting to update again. The next update will be earlier if
+              objects in the repository expire earlier and min-refresh is set. 
+              The default value is 600 seconds.
+
+       .. option:: --min-refresh=seconds
+
+              The amount of seconds the server should at least wait after 
+              having finished updating and validating the local repository 
+              before starting to update again. If not set this will default to
+              refresh.
 
        .. option:: --refresh=seconds
 
@@ -1331,8 +1354,13 @@ All values can be overridden via the command line options.
       refresh
             An integer value specifying the number of seconds Routinator
             should wait between consecutive validation runs in server mode.
-            The next validation run will happen earlier, if objects expire
-            earlier. The default is 600 seconds.
+            The next validation run will happen earlier if objects expire
+            earlier and min-refresh is set. The default is 600 seconds.
+
+      min-refresh
+            An integer value specifying the number of seconds Routinator
+            should at least wait between consecutive validation runs in server 
+            mode. If not set this will default to refresh. 
 
       retry
             An integer value specifying the number of seconds an RTR client
