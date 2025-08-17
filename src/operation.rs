@@ -19,7 +19,7 @@ use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 #[cfg(feature = "rta")] use bytes::Bytes;
 use clap::{Arg, Args, ArgAction, ArgMatches, FromArgMatches, Parser};
 use log::{error, info, warn};
@@ -33,7 +33,7 @@ use crate::{output, validity};
 use crate::config::Config;
 use crate::error::{ExitError, Failed, RunFailed};
 use crate::http::http_listener;
-use crate::metrics::{SharedRtrServerMetrics};
+use crate::metrics::RtrServerMetrics;
 use crate::output::{Output, OutputFormat};
 use crate::payload::{PayloadSnapshot, SharedHistory, ValidationReport};
 use crate::process::Process;
@@ -231,9 +231,9 @@ impl Server {
         warn!("Using config file {}.", process.config().config_file.display());
         process.setup_service(self.detach)?;
         let log = log.map(Arc::new);
-        let rtr_metrics = SharedRtrServerMetrics::new(
+        let rtr_metrics = Arc::new(RtrServerMetrics::new(
             process.config().rtr_client_metrics
-        );
+        ));
 
         let history = SharedHistory::from_config(process.config());
         let mut notify = NotifySender::new();
@@ -419,7 +419,7 @@ impl Server {
                 output::Summary::log(&metrics)
             }
             info!(
-                "New serial is {}.", serial
+                "New serial is {serial}."
             );
         }
         if must_notify {
@@ -435,6 +435,7 @@ impl Server {
 //------------ Vrps ----------------------------------------------------------
 
 /// Produce a list of Validated ROA Payload.
+#[derive(Debug)]
 pub struct Vrps {
     /// The destination to output the list to.
     ///
@@ -450,6 +451,9 @@ pub struct Vrps {
 
     /// Don’t update the repository.
     noupdate: bool,
+
+    /// Only update the repository if the cache is older than this.
+    update_after: Option<Duration>,
 
     /// Return an error on incomplete update.
     complete: bool,
@@ -502,8 +506,19 @@ struct VrpsArgs {
     no_aspas: bool,
 
     /// Don't update the local cache
-    #[arg(short, long)]
+    #[arg(
+        short, long,
+        conflicts_with = "update_after",
+    )]
     noupdate: bool,
+
+    /// Only update the cache if the last run was at least this long ago.
+    #[arg(
+        short, long,
+        value_name = "MINTUES",
+        conflicts_with = "noupdate",
+    )]
+    update_after: Option<u32>,
 
     /// Return an error status on incomplete update
     #[arg(long)]
@@ -576,6 +591,11 @@ impl Vrps {
             format,
             output,
             noupdate: args.noupdate,
+            update_after: args.update_after.map(|minutes| {
+                // Safety: a u32 converted to a u64 multiplied by 60 always
+                //         fits.
+                Duration::from_secs(u64::from(minutes) * 60)
+            }),
             complete: args.complete,
         })
     }
@@ -590,6 +610,21 @@ impl Vrps {
     fn run(mut self, process: Process) -> Result<(), ExitError> {
         self.output.update_from_config(process.config());
         let mut engine = Engine::new(process.config(), !self.noupdate)?;
+
+        // Disable collector if update_after demands it. If anything goes
+        // wrong here, we simply keep the collector in place.
+        if let Some(duration) = self.update_after {
+            if let Some(status) = engine.store_status()? {
+                if let Ok(age) = SystemTime::from(
+                    status.last_update
+                ).elapsed() {
+                    if age < duration {
+                        engine.disable_collector()
+                    }
+                }
+            }
+        }
+
         engine.ignite()?;
         process.switch_logging(false, false)?;
         warn!("Using config file {}.", process.config().config_file.display());
@@ -648,8 +683,7 @@ impl Vrps {
                 err.kind() != io::ErrorKind::BrokenPipe
             {
                 error!(
-                    "Failed to output result: {}",
-                    err
+                    "Failed to output result: {err}"
                 );
             }
             Err(ExitError::Generic)
@@ -806,8 +840,8 @@ impl Validate {
                 Ok(validity::RequestList::single(prefix, asn))
             }
             ValidateWhat::File(ref path) => {
-                let mut file = match fs::File::open(path) {
-                    Ok(file) => file,
+                let mut stream = match fs::File::open(path) {
+                    Ok(file) => io::BufReader::new(file),
                     Err(err) => {
                         error!(
                             "Failed to open input file '{}': {}'",
@@ -818,7 +852,7 @@ impl Validate {
                 };
                 if self.json {
                     validity::RequestList::from_json_reader(
-                        &mut file
+                        &mut stream
                     ).map_err(|err| {
                         error!(
                             "Failed to read input file '{}': {}'",
@@ -829,7 +863,7 @@ impl Validate {
                 }
                 else {
                     validity::RequestList::from_plain_reader(
-                        io::BufReader::new(file)
+                        &mut stream
                     ).map_err(|err| {
                         error!(
                             "Failed to read input file '{}': {}'",
@@ -846,7 +880,7 @@ impl Validate {
                     validity::RequestList::from_json_reader(
                         &mut file
                     ).map_err(|err| {
-                        error!("Failed to read input: {}'", err);
+                        error!("Failed to read input: {err}'");
                         ExitError::Generic
                     })
                 }
@@ -854,7 +888,7 @@ impl Validate {
                     validity::RequestList::from_plain_reader(
                         file
                     ).map_err(|err| {
-                        error!("Failed to read input: {}'", err);
+                        error!("Failed to read input: {err}'");
                         ExitError::Generic
                     })
                 }
@@ -892,8 +926,8 @@ impl Validate {
         let result = requests.validity(&snapshot);
         match self.output.as_ref() {
             Some(path) => {
-                let mut file = match fs::File::create(path) {
-                    Ok(file) => file,
+                let mut stream = match fs::File::create(path) {
+                    Ok(file) => io::BufWriter::new(file),
                     Err(err) => {
                         error!(
                             "Failed to open output file '{}': {}",
@@ -903,11 +937,12 @@ impl Validate {
                     }
                 };
                 let res = if self.json {
-                    result.write_json(&mut file)
+                    result.write_json(&mut stream)
                 }
                 else {
-                    result.write_plain(&mut file)
+                    result.write_plain(&mut stream)
                 };
+                let res = res.and_then(|_| stream.flush());
                 res.map_err(|err| {
                     error!(
                         "Failed to write to output file '{}': {}",
@@ -926,7 +961,7 @@ impl Validate {
                     result.write_plain(&mut stdout)
                 };
                 res.map_err(|err| {
-                    error!("Failed to write output: {}", err);
+                    error!("Failed to write output: {err}");
                     ExitError::Generic
                 })
             }
@@ -1315,7 +1350,7 @@ impl Man {
                     }
                 };
                 if let Err(err) = file.write_all(MAN_PAGE) {
-                    error!("Failed to write to output file: {}", err);
+                    error!("Failed to write to output file: {err}");
                     return Err(Failed.into())
                 }
                 info!(
@@ -1327,7 +1362,7 @@ impl Man {
                 let out = io::stdout();
                 let mut out = out.lock();
                 if let Err(err) = out.write_all(MAN_PAGE) {
-                    error!("Failed to write man page: {}", err);
+                    error!("Failed to write man page: {err}");
                     return Err(Failed.into())
                 }
             }
@@ -1343,21 +1378,19 @@ impl Man {
         let mut file = NamedTempFile::new().map_err(|err| {
             error!(
                 "Can't display man page: \
-                 Failed to create temporary file: {}.",
-                err
+                 Failed to create temporary file: {err}."
             );
             Failed
         })?;
         file.write_all(MAN_PAGE).map_err(|err| {
             error!(
                 "Can't display man page: \
-                Failed to write to temporary file: {}.",
-                err
+                Failed to write to temporary file: {err}."
             );
             Failed
         })?;
         Command::new("man").arg(file.path()).status().map_err(|err| {
-            error!("Failed to run man: {}", err);
+            error!("Failed to run man: {err}");
             Failed
         }).and_then(|exit| {
             if exit.success() {
@@ -1395,14 +1428,14 @@ impl SignalListener {
             usr1: match signal(SignalKind::user_defined1()) {
                 Ok(usr1) => usr1,
                 Err(err) => {
-                    error!("Attaching to signal USR1 failed: {}", err);
+                    error!("Attaching to signal USR1 failed: {err}");
                     return Err(Failed)
                 }
             },
             usr2: match signal(SignalKind::user_defined2()) {
                 Ok(usr2) => usr2,
                 Err(err) => {
-                    error!("Attaching to signal USR2 failed: {}", err);
+                    error!("Attaching to signal USR2 failed: {err}");
                     return Err(Failed)
                 }
             },

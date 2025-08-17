@@ -7,14 +7,16 @@ use chrono::{DateTime, Utc};
 use log::{error, warn};
 use reqwest::StatusCode;
 use ring::digest;
-use ring::constant_time::verify_slices_are_equal;
 use rpki::{rrdp, uri};
 use rpki::rrdp::{DeltaInfo, NotificationFile, ProcessDelta, ProcessSnapshot};
 use uuid::Uuid;
 use crate::error::{Failed, RunFailed};
 use crate::metrics::RrdpRepositoryMetrics;
 use crate::utils::archive::{ArchiveError, PublishError};
-use super::archive::{AccessError, FallbackTime, RepositoryState, RrdpArchive};
+use super::archive::{
+    AccessError, FallbackTime, RepositoryState, RrdpArchive,
+    SnapshotRrdpArchive,
+};
 use super::base::Collector;
 use super::http::{HttpClient, HttpResponse, HttpStatus};
 
@@ -63,7 +65,7 @@ impl Notification {
                 response
             }
             Err(err) => {
-                warn!("RRDP {}: {}", uri, err);
+                warn!("RRDP {uri}: {err}");
                 *status = HttpStatus::Error;
                 return Err(Failed)
             }
@@ -98,12 +100,11 @@ impl Notification {
         let mut content = NotificationFile::parse_limited(
             io::BufReader::new(response), delta_list_limit
         ).map_err(|err| {
-            warn!("RRDP {}: {}", uri, err);
+            warn!("RRDP {uri}: {err}");
             Failed
         })?;
         if !content.has_matching_origins(&uri) {
-            warn!("RRDP {}: snapshot or delta files with different origin",
-                uri
+            warn!("RRDP {uri}: snapshot or delta files with different origin"
             );
             return Err(Failed)
         }
@@ -165,7 +166,7 @@ pub struct SnapshotUpdate<'a> {
     collector: &'a Collector,
 
     /// The archive to store the snapshot into.
-    archive: &'a mut RrdpArchive,
+    archive: &'a mut SnapshotRrdpArchive,
 
     /// The notification file pointing to the snapshot.
     notify: &'a Notification,
@@ -177,7 +178,7 @@ pub struct SnapshotUpdate<'a> {
 impl<'a> SnapshotUpdate<'a> {
     pub fn new(
         collector: &'a Collector,
-        archive: &'a mut RrdpArchive,
+        archive: &'a mut SnapshotRrdpArchive,
         notify: &'a Notification,
         metrics: &'a mut RrdpRepositoryMetrics,
     ) -> Self {
@@ -205,18 +206,15 @@ impl<'a> SnapshotUpdate<'a> {
 
         let mut reader = io::BufReader::new(HashRead::new(response));
         self.process(&mut reader)?;
-        let hash = reader.into_inner().into_hash();
-        if verify_slices_are_equal(
-            hash.as_ref(),
-            self.notify.content.snapshot().hash().as_ref()
-        ).is_err() {
-            return Err(SnapshotError::HashMismatch)
-        }
+        reader.into_inner().verify_hash(
+            self.notify.content.snapshot().hash()
+        )?;
         self.archive.publish_state(
             &self.notify.to_repository_state(
                 self.collector.config().fallback_time
             )
         )?;
+        self.archive.finalize()?;
         Ok(())
     }
 }
@@ -256,7 +254,7 @@ impl ProcessSnapshot for SnapshotUpdate<'_> {
             PublishError::AlreadyExists => {
                 SnapshotError::DuplicateObject(uri.clone())
             }
-            PublishError::Archive(ArchiveError::Corrupt) => {
+            PublishError::Archive(ArchiveError::Corrupt(_)) => {
                 warn!(
                     "Temporary RRDP repository file {} became corrupt.",
                     self.archive.path().display(),
@@ -342,13 +340,7 @@ impl<'a> DeltaUpdate<'a> {
 
         let mut reader = io::BufReader::new(HashRead::new(response));
         self.process(&mut reader)?;
-        let hash = reader.into_inner().into_hash();
-        if verify_slices_are_equal(
-            hash.as_ref(),
-            self.info.hash().as_ref()
-        ).is_err() {
-            return Err(DeltaError::DeltaHashMismatch)
-        }
+        reader.into_inner().verify_hash(self.info.hash())?;
         Ok(())
     }
 }
@@ -458,11 +450,16 @@ impl<R> HashRead<R> {
         }
     }
 
-    /// Converts the reader into the hash.
-    pub fn into_hash(self) -> rrdp::Hash {
-        // Unwrap should be safe: This can only fail if the slice has the
-        // wrong length.
-        rrdp::Hash::try_from(self.context.finish()).unwrap()
+    /// Checks that the hash matches the provided hash.
+    pub fn verify_hash(
+        self, expected: rrdp::Hash
+    ) -> Result<(), HashMismatch> {
+        if self.context.finish().as_ref() != expected.as_ref() {
+            Err(HashMismatch)
+        }
+        else {
+            Ok(())
+        }
     }
 }
 
@@ -653,6 +650,12 @@ enum RrdpDataReadError {
 }
 
 
+//------------ HashMismatch --------------------------------------------------
+
+/// The hash of a snapshot or delta didn’t match the expected value.
+struct HashMismatch;
+
+
 //------------ SnapshotError -------------------------------------------------
 
 /// An error happened during snapshot processing.
@@ -719,6 +722,12 @@ impl From<RrdpDataReadError> for SnapshotError {
                 SnapshotError::Rrdp(err.into())
             }
         }
+    }
+}
+
+impl From<HashMismatch> for SnapshotError {
+    fn from(_: HashMismatch) -> Self {
+        Self::HashMismatch
     }
 }
 
@@ -832,6 +841,12 @@ impl From<RrdpDataReadError> for DeltaError {
                 DeltaError::Rrdp(err.into())
             }
         }
+    }
+}
+
+impl From<HashMismatch> for DeltaError {
+    fn from(_: HashMismatch) -> Self {
+        Self::DeltaHashMismatch
     }
 }
 

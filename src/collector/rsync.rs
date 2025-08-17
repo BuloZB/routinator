@@ -123,14 +123,17 @@ impl Collector {
     }
 
     /// Start a validation run on the collector.
-    pub fn start(&self) -> Run {
+    pub fn start(&self) -> Run<'_> {
         Run::new(self)
     }
 
     /// Dumps the content of the rsync collector.
     pub fn dump(&self, dir: &Path) -> Result<(), Failed> {
         let target = dir.join("rsync");
-        debug!("Dumping rsync collector content to {}", target.display());
+        debug!("Dumping rsync collector content from {} to {}", 
+            self.working_dir.base.display(), 
+            target.display()
+        );
 
         if let Err(err) = fs::remove_dir_all(&target) {
             if err.kind() != io::ErrorKind::NotFound {
@@ -283,8 +286,7 @@ impl<'a> Run<'a> {
         // Check if the module name is dubious. If so, skip updating.
         if self.collector.filter_dubious && uri.has_dubious_authority() {
             warn!(
-                "{}: Dubious host name. Skipping update.",
-                module
+                "{module}: Dubious host name. Skipping update."
             )
         }
         else {
@@ -333,7 +335,7 @@ impl<'a> Run<'a> {
             }
             Err(err) => {
                 if err.kind() == io::ErrorKind::NotFound {
-                    info!("{}: not found in local repository", uri);
+                    info!("{uri}: not found in local repository");
                 } else {
                     error!(
                         "Failed to open file '{}': {}",
@@ -452,8 +454,7 @@ impl RsyncCommand {
             Ok(output) => output,
             Err(err) => {
                 error!(
-                    "Failed to run rsync: {}",
-                    err
+                    "Failed to run rsync: {err}"
                 );
                 return Err(Failed)
             }
@@ -576,8 +577,7 @@ impl RsyncCommand {
                 Err(err) => {
                     if let Err(kill_err) = child.kill().await {
                         warn!(
-                            "{}: Failed to kill rsync process: {}",
-                            source, kill_err
+                            "{source}: Failed to kill rsync process: {kill_err}"
                         );
                     }
                     Err(err)
@@ -585,11 +585,11 @@ impl RsyncCommand {
             };
             if !stdout.is_empty() {
                 String::from_utf8_lossy(&stdout).lines().for_each(|l| {
-                    info!("{}: {}", source, l);
+                    info!("{source}: {l}");
                 })
             }
             if let Err(ref err) = status {
-                warn!("{}: {}", source, err);
+                warn!("{source}: {err}");
             }
             status
         })
@@ -601,7 +601,7 @@ impl RsyncCommand {
         source: &Module,
         destination: &Path
     ) -> Result<AsyncCommand, io::Error> {
-        info!("rsyncing from {}.", source);
+        info!("rsyncing from {source}.");
         fs::create_dir_all(destination)?;
         let destination = match Self::format_destination(destination) {
             Ok(some) => some,
@@ -621,7 +621,7 @@ impl RsyncCommand {
            .arg("--delete")
            .arg(source.to_string())
            .arg(destination);
-        debug!("{}: Running command {:?}", source, cmd);
+        debug!("{source}: Running command {cmd:?}");
         Ok(cmd)
     }
 
@@ -778,7 +778,7 @@ impl Module {
     /// function may have to convert upper ASCII case letters into lower case
     /// to create a canonical value. If this has to happen, an [`OwnedModule`]
     /// is returned via the cow.
-    pub fn from_uri(uri: &uri::Rsync) -> Cow<Module> {
+    pub fn from_uri(uri: &uri::Rsync) -> Cow<'_, Module> {
         match uri.canonical_module() {
             Cow::Borrowed(s) => {
                 Cow::Borrowed(unsafe { Module::from_str(s) })

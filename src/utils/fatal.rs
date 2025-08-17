@@ -116,7 +116,7 @@ impl Iterator for ReadDir<'_> {
 //------------ read_dir ------------------------------------------------------
 
 /// Returns an iterator over a directory, logging fatal errors on any error.
-pub fn read_dir(path: &Path) -> Result<ReadDir, Failed> {
+pub fn read_dir(path: &Path) -> Result<ReadDir<'_>, Failed> {
     match fs::read_dir(path) {
         Ok(iter) => Ok(ReadDir { path, iter }),
         Err(err) => {
@@ -135,7 +135,7 @@ pub fn read_dir(path: &Path) -> Result<ReadDir, Failed> {
 /// Returns an iterator over an existing directory.
 ///
 /// Returns `None` if the repository doesn’t exist.
-pub fn read_existing_dir(path: &Path) -> Result<Option<ReadDir>, Failed> {
+pub fn read_existing_dir(path: &Path) -> Result<Option<ReadDir<'_>>, Failed> {
     match fs::read_dir(path) {
         Ok(iter) => Ok(Some(ReadDir { path, iter })),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -253,6 +253,40 @@ pub fn rename(source: &Path, target: &Path) -> Result<(), Failed> {
 /// Errors out if the file doesn’t exist.
 pub fn open_file(path: &Path) -> Result<File, Failed> {
     File::open(path).map_err(|err| {
+        error!(
+            "Fatal: failed to open file {}: {}",
+            path.display(), IoErrorDisplay(err)
+        );
+        Failed
+    })
+}
+
+
+//------------ open_existing_file --------------------------------------------
+
+/// Opens a file if it exists.
+pub fn open_existing_file(path: &Path) -> Result<Option<File>, Failed> {
+    match File::open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => {
+            error!(
+                "Fatal: failed to open file {}: {}",
+                path.display(), IoErrorDisplay(err)
+            );
+            Err(Failed)
+        }
+    }
+}
+
+
+//------------ create_file ---------------------------------------------------
+
+/// Opens a file in write-only mode.
+///
+/// Create a file if it does not exist, and truncates it if it does.
+pub fn create_file(path: &Path) -> Result<File, Failed> {
+    File::create(path).map_err(|err| {
         error!(
             "Fatal: failed to open file {}: {}",
             path.display(), IoErrorDisplay(err)

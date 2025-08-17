@@ -14,12 +14,32 @@ New
   specify a short minimum refresh time if objects expire before the
   refresh time. If this value is set to 0, the old behaviour is restored.
   ([#1027])
+* The order in which manifest entries are processed is now randomized.
+  ([#1041])
+* Reduced the overhead of storing RRDP snapshot downloads, significantly
+  improving the snapshot update times. ([#1035])
+* The `dump` command now prints the source directories of the data it
+  dumps. ([#1045])
+* Added a `--update-after` option to the `vrps` subcommand that skips
+  updating the local cache if the last successful validation run was known
+  to be less than a given number of minutes ago. ([#1049])
+* Error responses for API-related HTTP endpoints now contain JSON bodies.
+  ([#1050])
 
 Bug fixes
 
+* Re-implemented RRDP client metrics based on the much simpler model used
+  by RTRTR to fix recurring errors in the metrics. ([#1039])
+
+
 Other changes
 
+* Improved performance of file system operations on validate subcommand.
+  ([#1043] by [@kawaemon])
 * Add package.homepage to Cargo.toml ([#1024])
+* Added building packages for RHEL 10 and Debian 13. ([#1034], [#1047])
+* Added building packages for ARMv6 and ARM64 for Debian Bookworm.
+  ([#1036])
 * Upgrades various dependencies. ([#1004], [#1005], [#1006])
 
 [#1004]: https://github.com/NLnetLabs/routinator/pull/1004
@@ -29,6 +49,16 @@ Other changes
 [#1021]: https://github.com/NLnetLabs/routinator/pull/1021
 [#1024]: https://github.com/NLnetLabs/routinator/pull/1024
 [#1027]: https://github.com/NLnetLabs/routinator/pull/1027
+[#1034]: https://github.com/NLnetLabs/routinator/pull/1034
+[#1035]: https://github.com/NLnetLabs/routinator/pull/1035
+[#1036]: https://github.com/NLnetLabs/routinator/pull/1036
+[#1039]: https://github.com/NLnetLabs/routinator/pull/1039
+[#1041]: https://github.com/NLnetLabs/routinator/pull/1041
+[#1043]: https://github.com/NLnetLabs/routinator/pull/1043
+[#1045]: https://github.com/NLnetLabs/routinator/pull/1045
+[#1047]: https://github.com/NLnetLabs/routinator/pull/1047
+[#1049]: https://github.com/NLnetLabs/routinator/pull/1049
+[@kawaemon]: https://github.com/kawaemon
 
 
 ## 0.14.2 ‘Roll Initiative!’

@@ -93,7 +93,7 @@ impl Collector {
     }
 
     /// Starts a new validation run using this collector.
-    pub fn start(&self) -> Run {
+    pub fn start(&self) -> Run<'_> {
         Run::new(self)
     }
 
@@ -230,7 +230,7 @@ impl<'a> Run<'a> {
                 }
 
                 if first && self.rsync.is_some() {
-                    info!("RRDP {}: Falling back to rsync.", rrdp_uri);
+                    info!("RRDP {rrdp_uri}: Falling back to rsync.");
                 }
             }
         }

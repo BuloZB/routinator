@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use rpki::rtr::server::NotifySender;
 use crate::config::Config;
-use crate::metrics::{HttpServerMetrics, SharedRtrServerMetrics};
+use crate::metrics::{HttpServerMetrics, RtrServerMetrics};
 use crate::payload::SharedHistory;
 use crate::process::LogOutput;
 use super::{delta, log, metrics, payload, status, validity};
@@ -17,7 +17,7 @@ pub struct State {
     log: log::State,
     history: SharedHistory,
     metrics: Arc<HttpServerMetrics>,
-    rtr_metrics: SharedRtrServerMetrics,
+    rtr_metrics: Arc<RtrServerMetrics>,
     notify: NotifySender,
 }
 
@@ -25,7 +25,7 @@ impl State {
     pub fn new(
         config: &Config,
         history: SharedHistory,
-        rtr_metrics: SharedRtrServerMetrics,
+        rtr_metrics: Arc<RtrServerMetrics>,
         log: Option<Arc<LogOutput>>,
         notify: NotifySender,
     ) -> Self {
@@ -46,7 +46,7 @@ impl State {
     pub async fn handle_request(&self, req: Request) -> Response {
         self.metrics.inc_requests();
         if !req.is_get_or_head() {
-            return Response::method_not_allowed()
+            return Response::method_not_allowed(req.is_api())
         }
 
         if let Some(response) = self.payload.handle_get_or_head(
@@ -87,7 +87,7 @@ impl State {
             return response
         }
         
-        Response::not_found()
+        Response::not_found(req.is_api())
     }
 }
 

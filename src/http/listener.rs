@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use crate::config::Config;
 use crate::error::ExitError;
-use crate::metrics::{HttpServerMetrics, SharedRtrServerMetrics};
+use crate::metrics::{HttpServerMetrics, RtrServerMetrics};
 use crate::payload::SharedHistory;
 use crate::process::LogOutput;
 use crate::utils::{net, tls};
@@ -30,7 +30,7 @@ use super::dispatch::State;
 /// Returns a future for all HTTP server listeners.
 pub fn http_listener(
     origins: SharedHistory,
-    rtr_metrics: SharedRtrServerMetrics,
+    rtr_metrics: Arc<RtrServerMetrics>,
     log: Option<Arc<LogOutput>>,
     config: &Config,
     notify: NotifySender,
@@ -111,7 +111,7 @@ async fn single_http_listener(
         sock: match TcpListener::from_std(listener) {
             Ok(listener) => listener,
             Err(err) => {
-                error!("Failed on listening on {}: {}", addr,err);
+                error!("Failed on listening on {addr}: {err}");
                 return
             }
         },
@@ -122,7 +122,7 @@ async fn single_http_listener(
         let stream = match listener.accept().await {
             Ok(some) => some,
             Err(err) => {
-                error!("Fatal error in HTTP server {}: {}", addr, err);
+                error!("Fatal error in HTTP server {addr}: {err}");
                 break;
             }
         };

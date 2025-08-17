@@ -18,7 +18,9 @@ use crate::utils::dump::DumpRegistry;
 use crate::utils::json::JsonBuilder;
 use crate::utils::sync::{Mutex, RwLock};
 use crate::utils::uri::UriExt;
-use super::archive::{FallbackTime, RrdpArchive, RepositoryState};
+use super::archive::{
+    FallbackTime, RrdpArchive, RepositoryState, SnapshotRrdpArchive,
+};
 use super::http::{HttpClient, HttpStatus};
 use super::update::{
     DeltaUpdate, Notification, SnapshotError, SnapshotReason, SnapshotUpdate
@@ -117,7 +119,7 @@ impl Collector {
                         );
                         return Err(Fatal)
                     }
-                    Err(OpenError::Archive(ArchiveError::Corrupt)) => {
+                    Err(OpenError::Archive(ArchiveError::Corrupt(_))) => {
                         match fs::remove_file(entry.path()) {
                             Ok(()) => {
                                 info!(
@@ -142,14 +144,17 @@ impl Collector {
         Ok(())
     }
 
-    pub fn start(&self) -> Run {
+    pub fn start(&self) -> Run<'_> {
         Run::new(self)
     }
 
     #[allow(clippy::mutable_key_type)]
     pub fn dump(&self, dir: &Path) -> Result<(), Fatal> {
         let dir = dir.join("rrdp");
-        debug!("Dumping RRDP collector content to {}", dir.display());
+        debug!("Dumping RRDP collector content from {} to {}", 
+            self.working_dir.display(), 
+            dir.display()
+        );
         let mut registry = DumpRegistry::new(dir);
         let mut states = HashMap::new();
         for entry in fatal::read_dir(&self.working_dir)? {
@@ -366,15 +371,14 @@ impl<'a> Run<'a> {
         };
         if response.content_length() > self.collector.config().max_object_size {
             warn!(
-                "Trust anchor certificate {} exceeds size limit. \
-                 Ignoring.",
-                uri
+                "Trust anchor certificate {uri} exceeds size limit. \
+                 Ignoring."
             );
             return None
         }
         let mut bytes = Vec::new();
         if let Err(err) = response.copy_to(&mut bytes) {
-            info!("Failed to get trust anchor {}: {}", uri, err);
+            info!("Failed to get trust anchor {uri}: {err}");
             return None
         }
         Some(Bytes::from(bytes))
@@ -428,8 +432,7 @@ impl<'a> Run<'a> {
             let mut metrics = RrdpRepositoryMetrics::new(rpki_notify.clone());
             metrics.notify_status = HttpStatus::Rejected;
             warn!(
-                "{}: Dubious host name. Not using the repository.",
-                rpki_notify
+                "{rpki_notify}: Dubious host name. Not using the repository."
             );
             (LoadResult::Unavailable, metrics)
         }
@@ -859,7 +862,9 @@ impl<'a> RepositoryUpdate<'a> {
     ) -> Result<bool, RunFailed> {
         debug!("RRDP {}: updating from snapshot.", self.rpki_notify);
         let (file, path) = self.collector.temp_file()?;
-        let mut archive = RrdpArchive::create_with_file(file, path.clone())?;
+        let mut archive = SnapshotRrdpArchive::create_with_file(
+            file, path.clone()
+        )?;
         if let Err(err) = SnapshotUpdate::new(
             self.collector, &mut archive, notify, &mut self.metrics
         ).try_update() {
