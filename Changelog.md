@@ -10,6 +10,21 @@ Breaking changes
   logged separately and by default are only visible in the status HTTP
   server endpoints. The new `log-repository-issues` option can be used to
   have these messages also written to the log. ([#1054])
+* Changed how server mode deals with broken or missing local exception
+  files. Previously, Routinator would just stop updating until they are
+  fixed, leading to updates being stalled if the operator misses the error
+  messages. Now it will log a warning and keep using the previous set of
+  local exceptions. When starting, it will exit with an error message if
+  there are broken or missing local exception files. ([#1060])
+* Changed the RRDP timeouts: introduced a new config variable
+  `rrdp-read-timeout` that provides a timeout for individual network
+  operations (primarily: read from the server). Its default is 10 seconds.
+  This timeout is also used for connecting of no specific value is given,
+  significantly speeding up validation runs.
+
+  In addition, the RRDP timeout was increased from 300 to 600 seconds to
+  better deal with slow transmission of large snapshots of some
+  repositories. ([#1061])
 
 New
 
@@ -56,6 +71,8 @@ Other changes
 * Added building packages for RHEL 10 and Debian 13. ([#1034], [#1047])
 * Added building packages for ARMv6 and ARM64 for Debian Bookworm.
   ([#1036])
+* Added additional restrictions to the systemd unit files used in the
+  various binary packages. ([#1056])
 * Upgrades various dependencies. ([#1004], [#1005], [#1006])
 
 [#1004]: https://github.com/NLnetLabs/routinator/pull/1004
@@ -77,7 +94,10 @@ Other changes
 [#1052]: https://github.com/NLnetLabs/routinator/pull/1052
 [#1053]: https://github.com/NLnetLabs/routinator/pull/1053
 [#1055]: https://github.com/NLnetLabs/routinator/pull/1055
+[#1056]: https://github.com/NLnetLabs/routinator/pull/1056
 [#1057]: https://github.com/NLnetLabs/routinator/pull/1057
+[#1060]: https://github.com/NLnetLabs/routinator/pull/1060
+[#1061]: https://github.com/NLnetLabs/routinator/pull/1061
 [@kawaemon]: https://github.com/kawaemon
 [mitmproxy]: https://www.mitmproxy.org/
 
