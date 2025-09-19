@@ -2,6 +2,15 @@
 
 ## Unreleased next version
 
+Bug fixes
+
+Other changes
+
+
+## 0.15.0-rc1
+
+Released 2025-09-18.
+
 Breaking changes
 
 * Removed the `rrdp-keep-responses` feature. We suggest the use of an HTTP
@@ -74,7 +83,6 @@ Bug fixes
   by RTRTR to fix recurring errors in the metrics. ([#1039])
 * Changed the message logged when an RRDP update times out to actually say
   that. ([#1052])
-
 
 Other changes
 
